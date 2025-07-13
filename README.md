@@ -204,6 +204,128 @@ The transcription is saved as a text file with the same name as the input file, 
 
 Example: `audio.mp3` → `audio_transcription.txt`
 
+## Transcription Cleanup (Post-Processing)
+
+Clean up transcriptions by removing filler words, repetitions, and improving readability using LLMs.
+
+### Installation
+
+```bash
+# Install cleanup dependencies
+pip install -r requirements-cleanup.txt
+```
+
+### Basic Usage
+
+```bash
+# Clean up using Claude API (recommended)
+export CLAUDE_API_KEY="your-api-key"
+python cleanup_transcription.py audio_transcription.txt
+
+# Clean up using OpenAI
+export OPENAI_API_KEY="your-api-key"
+python cleanup_transcription.py audio_transcription.txt --provider openai
+
+# Local cleanup (no API needed)
+python cleanup_transcription.py audio_transcription.txt --local-only
+```
+
+### Advanced Options
+
+```bash
+# Business style (formal, concise)
+python cleanup_transcription.py transcript.txt --style business
+
+# Casual style (natural conversation flow)
+python cleanup_transcription.py transcript.txt --style casual
+
+# Academic style (formal, structured)
+python cleanup_transcription.py transcript.txt --style academic
+
+# Preserve speaker labels
+python cleanup_transcription.py transcript.txt --preserve-speakers
+
+# Custom output file
+python cleanup_transcription.py input.txt -o cleaned_output.txt
+```
+
+### Cleanup Features
+
+1. **Filler Word Removal**: Removes "um", "uh", "えー", "あの" etc.
+2. **Repetition Elimination**: Detects and removes repeated words/phrases
+3. **Grammar Correction**: Fixes punctuation and grammar errors
+4. **Style Formatting**: Adapts text to business, casual, or academic style
+5. **Speaker Preservation**: Optionally maintains speaker labels
+6. **Chunk Processing**: Handles long transcriptions efficiently
+
+### API Setup
+
+#### Method 1: Using .env File (Recommended)
+
+1. **Copy the example file**:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edit .env file with your API keys**:
+   ```bash
+   # Open .env in your editor
+   nano .env
+   
+   # Add your actual API keys
+   CLAUDE_API_KEY=sk-ant-api03-your-actual-key-here
+   OPENAI_API_KEY=sk-your-actual-openai-key-here
+   ```
+
+3. **Install additional dependencies**:
+   ```bash
+   pip install -r requirements-cleanup.txt
+   ```
+
+#### Method 2: Environment Variables
+
+##### Claude API
+1. Get API key from [Anthropic Console](https://console.anthropic.com/)
+2. Set environment variable:
+   ```bash
+   export CLAUDE_API_KEY="sk-ant-api03-your-key"
+   ```
+
+##### OpenAI API
+1. Get API key from [OpenAI Platform](https://platform.openai.com/)
+2. Set environment variable:
+   ```bash
+   export OPENAI_API_KEY="sk-your-key"
+   ```
+
+#### Method 3: Command Line
+
+```bash
+# Specify API key directly in command
+python cleanup_transcription.py transcript.txt --api-key "sk-ant-api03-your-key"
+```
+
+#### Security Best Practices
+
+- ✅ **Use .env files** for local development
+- ✅ **Never commit API keys** to Git (they're in .gitignore)
+- ✅ **Use environment variables** in production
+- ✅ **Rotate keys regularly** (monthly recommended)
+- ❌ **Never hardcode keys** in source code
+- ❌ **Don't share keys** in chat/email
+
+### Example Workflow
+
+```bash
+# 1. Transcribe audio
+python transcribe_japanese.py meeting.m4a --model medium
+
+# 2. Clean up transcription
+python cleanup_transcription.py meeting_transcription.txt --style business
+
+# Result: meeting_transcription_cleaned.txt
+```
+
 ## Troubleshooting
 
 ### Common Issues and Solutions

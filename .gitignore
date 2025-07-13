@@ -104,12 +104,20 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.*.local
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# API Keys and sensitive configuration
+*.key
+*.pem
+config.json
+secrets.json
 
 # Spyder project settings
 .spyderproject
@@ -160,7 +168,14 @@ cython_debug/
 
 # Transcription outputs
 *_transcription.txt
+*_cleaned.txt
 *_chunks/
+transcriptions/
+
+# Keep sample files in samples/ directory
+!samples/*.txt
+!samples/*.mp3
+!samples/*.m4a
 
 # Temporary files
 *.tmp

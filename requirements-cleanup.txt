@@ -1,0 +1,15 @@
+# Requirements for transcription cleanup script
+# Install with: pip install -r requirements-cleanup.txt
+
+# LLM providers (optional - install only what you need)
+anthropic>=0.18.0  # For Claude API
+openai>=1.0.0      # For OpenAI GPT models
+
+# Environment variable management
+python-dotenv>=1.0.0  # For .env file support
+
+# Progress bar (optional but recommended)
+tqdm>=4.65.0
+
+# The base requirements from requirements.txt are also needed
+# Run: pip install -r requirements.txt
