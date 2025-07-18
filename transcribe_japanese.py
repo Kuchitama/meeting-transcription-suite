@@ -159,6 +159,7 @@ def split_audio_dynamic(audio_path, min_duration=30.0, max_duration=900.0, use_d
     """Split audio file using dynamic or fixed chunking"""
     temp_dir = tempfile.mkdtemp()
     chunk_files = []
+    chunk_boundaries = []
     
     try:
         duration = get_audio_duration(audio_path)
@@ -166,7 +167,7 @@ def split_audio_dynamic(audio_path, min_duration=30.0, max_duration=900.0, use_d
         
         if duration <= max_duration:
             # No need to split
-            return [audio_path], temp_dir
+            return [audio_path], temp_dir, [0.0]
         
         if use_dynamic:
             # Try dynamic splitting first
@@ -191,19 +192,32 @@ def split_audio_dynamic(audio_path, min_duration=30.0, max_duration=900.0, use_d
                     
                     if os.path.exists(chunk_file) and os.path.getsize(chunk_file) > 0:
                         chunk_files.append(chunk_file)
+                        chunk_boundaries.append(start_time)
                 
                 if chunk_files:
                     print(f"Created {len(chunk_files)} dynamic chunks")
-                    return chunk_files, temp_dir
+                    return chunk_files, temp_dir, chunk_boundaries
         
         # Fallback to fixed chunking
         print(f"Using fixed chunking with {max_duration//60}-minute chunks...")
-        return split_audio_fixed(audio_path, max_duration, temp_dir)
+        chunk_files, temp_dir = split_audio_fixed(audio_path, max_duration, temp_dir)
+        
+        # Generate boundaries for fixed chunking
+        for i in range(len(chunk_files)):
+            chunk_boundaries.append(i * max_duration)
+        
+        return chunk_files, temp_dir, chunk_boundaries
         
     except Exception as e:
         print(f"Error in dynamic splitting: {e}")
         print("Falling back to fixed chunking...")
-        return split_audio_fixed(audio_path, max_duration, temp_dir)
+        chunk_files, temp_dir = split_audio_fixed(audio_path, max_duration, temp_dir)
+        
+        # Generate boundaries for fixed chunking fallback
+        for i in range(len(chunk_files)):
+            chunk_boundaries.append(i * max_duration)
+        
+        return chunk_files, temp_dir, chunk_boundaries
 
 def split_audio_fixed(audio_path, chunk_duration, temp_dir):
     """Fixed-time audio splitting (fallback method)"""
@@ -499,9 +513,11 @@ def transcribe_with_chunking(video_path, model_size="base", temperature=0.0, chu
     
     # Split audio into chunks
     if use_dynamic_chunking:
-        chunk_files, temp_dir = split_audio_dynamic(video_path, min_duration=30.0, max_duration=chunk_duration, use_dynamic=True)
+        chunk_files, temp_dir, chunk_boundaries = split_audio_dynamic(video_path, min_duration=30.0, max_duration=chunk_duration, use_dynamic=True)
     else:
         chunk_files, temp_dir = split_audio_fixed(video_path, chunk_duration, tempfile.mkdtemp())
+        # Generate boundaries for fixed chunking
+        chunk_boundaries = [i * chunk_duration for i in range(len(chunk_files))]
     
     if len(chunk_files) == 1:
         # No chunking needed, use standard method
@@ -604,15 +620,8 @@ def transcribe_with_chunking(video_path, model_size="base", temperature=0.0, chu
         
         # Combine results from all chunks
         print("Combining results from all chunks...")
-        # Get chunk boundaries if using dynamic chunking
-        chunk_boundaries = None
-        if use_dynamic_chunking:
-            try:
-                chunk_boundaries = detect_speech_boundaries(video_path, min_duration=30.0, max_duration=chunk_duration)
-            except:
-                pass
         
-        combined_result = combine_chunk_results(chunk_results, chunk_boundaries)
+        combined_result = combine_chunk_results(chunk_results, chunk_boundaries, chunk_duration)
         
         return combined_result
         
@@ -623,7 +632,7 @@ def transcribe_with_chunking(video_path, model_size="base", temperature=0.0, chu
         except:
             pass
 
-def combine_chunk_results(chunk_results, chunk_boundaries=None):
+def combine_chunk_results(chunk_results, chunk_boundaries=None, chunk_duration=600):
     """Combine transcription results from multiple chunks"""
     combined_segments = []
     full_text = ""
@@ -633,12 +642,12 @@ def combine_chunk_results(chunk_results, chunk_boundaries=None):
     
     for chunk_index, result in sorted_chunks:
         # Calculate time offset
-        if chunk_boundaries and chunk_index < len(chunk_boundaries):
+        if chunk_boundaries and len(chunk_boundaries) > chunk_index:
             # Use actual boundaries from dynamic chunking
             time_offset = chunk_boundaries[chunk_index]
         else:
             # Fallback to estimated offset (for fixed chunking)
-            time_offset = chunk_index * 600  # Default chunk duration
+            time_offset = chunk_index * chunk_duration
         
         # Add text
         if result["text"].strip():
