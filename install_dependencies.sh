@@ -60,6 +60,47 @@ check_lzma() {
     fi
 }
 
+# Function to check libsndfile
+check_libsndfile() {
+    # Try to check if librosa can load audio files properly
+    if python3 -c "import soundfile" 2>/dev/null; then
+        print_success "Python soundfile module is available (libsndfile is working)!"
+        return 0
+    else
+        print_warning "Python soundfile module not available (librosa may use audioread fallback)"
+        return 1
+    fi
+}
+
+# Function to install libsndfile
+install_libsndfile() {
+    print_status "Installing libsndfile for audio processing support..."
+    
+    if command_exists apt; then
+        sudo apt install -y libsndfile1
+        print_success "libsndfile1 installed via apt"
+        return 0
+    elif command_exists yum; then
+        sudo yum install -y libsndfile
+        print_success "libsndfile installed via yum"
+        return 0
+    elif command_exists dnf; then
+        sudo dnf install -y libsndfile
+        print_success "libsndfile installed via dnf"
+        return 0
+    elif command_exists brew; then
+        brew install libsndfile
+        print_success "libsndfile installed via brew"
+        return 0
+    else
+        print_warning "Could not install libsndfile automatically. Please install manually:"
+        print_warning "  Ubuntu/Debian: sudo apt install libsndfile1"
+        print_warning "  CentOS/RHEL: sudo yum install libsndfile"
+        print_warning "  macOS: brew install libsndfile"
+        return 1
+    fi
+}
+
 # Function to install liblzma-dev
 install_lzma_dev() {
     print_status "Installing liblzma-dev for Python lzma module support..."
@@ -102,9 +143,9 @@ install_apt() {
     print_status "Updating package list..."
     sudo apt update
     
-    # Install FFmpeg and lzma development libraries
-    print_status "Installing ffmpeg and liblzma-dev packages..."
-    sudo apt install -y ffmpeg liblzma-dev
+    # Install FFmpeg, audio libraries, and lzma development libraries
+    print_status "Installing ffmpeg, libsndfile1, and liblzma-dev packages..."
+    sudo apt install -y ffmpeg libsndfile1 liblzma-dev
     
     return 0
 }
@@ -118,9 +159,9 @@ install_homebrew() {
         return 1
     fi
     
-    # Install FFmpeg and xz (for lzma support)
-    print_status "Installing ffmpeg and xz via brew..."
-    brew install ffmpeg xz
+    # Install FFmpeg, audio libraries, and xz (for lzma support)
+    print_status "Installing ffmpeg, libsndfile, and xz via brew..."
+    brew install ffmpeg libsndfile xz
     
     return 0
 }
@@ -138,9 +179,13 @@ install_snap() {
     print_status "Installing ffmpeg via snap..."
     sudo snap install ffmpeg
     
-    # Note: snap doesn't provide liblzma-dev, so install it separately if possible
+    # Note: snap doesn't provide development libraries, so install them separately if possible
     if ! install_lzma_dev; then
         print_warning "Could not install liblzma-dev via snap. You may need to install it manually."
+    fi
+    
+    if ! install_libsndfile; then
+        print_warning "Could not install libsndfile via snap. You may need to install it manually."
     fi
     
     return 0
@@ -208,6 +253,11 @@ install_static() {
         print_warning "Could not install liblzma-dev. You may need to install it manually."
     fi
     
+    # Try to install libsndfile separately
+    if ! install_libsndfile; then
+        print_warning "Could not install libsndfile. You may need to install it manually."
+    fi
+    
     return 0
 }
 
@@ -246,6 +296,16 @@ verify_installation() {
         # Don't fail verification for lzma, just warn
     fi
     
+    # Check libsndfile
+    print_status "Checking libsndfile/soundfile module..."
+    if check_libsndfile; then
+        print_success "Python soundfile module verification passed!"
+    else
+        print_warning "Python soundfile module not available. Librosa will use audioread fallback."
+        print_warning "You may need to: pip install soundfile"
+        # Don't fail verification for soundfile, just warn
+    fi
+    
     if [ $VERIFICATION_FAILED -eq 0 ]; then
         print_success "Dependencies installation verification completed!"
         return 0
@@ -261,6 +321,7 @@ show_usage() {
     echo ""
     echo "This script installs required system dependencies:"
     echo "  - FFmpeg (for audio/video processing)"
+    echo "  - libsndfile (for audio file loading with librosa)"
     echo "  - liblzma-dev (for Python lzma module support)"
     echo ""
     echo "Usage: $0 [method]"
@@ -289,6 +350,7 @@ main() {
     # Check if already installed
     FFMPEG_OK=0
     LZMA_OK=0
+    LIBSNDFILE_OK=0
     
     if check_ffmpeg; then
         FFMPEG_OK=1
@@ -298,19 +360,39 @@ main() {
         LZMA_OK=1
     fi
     
-    if [ $FFMPEG_OK -eq 1 ] && [ $LZMA_OK -eq 1 ]; then
+    if check_libsndfile; then
+        LIBSNDFILE_OK=1
+    fi
+    
+    if [ $FFMPEG_OK -eq 1 ] && [ $LZMA_OK -eq 1 ] && [ $LIBSNDFILE_OK -eq 1 ]; then
         echo ""
         echo "All dependencies are already installed and working. No action needed."
         exit 0
     elif [ $FFMPEG_OK -eq 1 ]; then
         echo ""
-        print_warning "FFmpeg is installed but lzma module may be missing."
-        print_status "Attempting to install liblzma-dev..."
-        if install_lzma_dev; then
-            print_success "liblzma-dev installed. You may need to rebuild Python."
-            print_warning "If you still get '_lzma' errors, try: pyenv install [version] (if using pyenv)"
+        print_warning "FFmpeg is installed but some Python modules may be missing."
+        NEED_INSTALL=0
+        
+        if [ $LZMA_OK -eq 0 ]; then
+            print_status "Attempting to install liblzma-dev..."
+            if install_lzma_dev; then
+                print_success "liblzma-dev installed. You may need to rebuild Python."
+                print_warning "If you still get '_lzma' errors, try: pyenv install [version] (if using pyenv)"
+            fi
+            NEED_INSTALL=1
         fi
-        exit 0
+        
+        if [ $LIBSNDFILE_OK -eq 0 ]; then
+            print_status "Attempting to install libsndfile..."
+            if install_libsndfile; then
+                print_success "libsndfile installed. You may need to reinstall soundfile: pip install --force-reinstall soundfile"
+            fi
+            NEED_INSTALL=1
+        fi
+        
+        if [ $NEED_INSTALL -eq 1 ]; then
+            exit 0
+        fi
     fi
     
     # Parse arguments

@@ -39,7 +39,7 @@ def get_audio_duration(audio_path):
 
 def detect_silence_intervals(audio_path, min_silence_duration=2.0, silence_threshold=-40):
     """
-    Detect silence intervals in audio file using librosa
+    Detect silence intervals in audio file using librosa with optimizations
     
     Args:
         audio_path: Path to audio file
@@ -50,12 +50,24 @@ def detect_silence_intervals(audio_path, min_silence_duration=2.0, silence_thres
         List of (start_time, end_time) tuples for silence intervals
     """
     try:
-        # Load audio with librosa
-        y, sr = librosa.load(audio_path, sr=None)
+        print("Analyzing audio for silence detection...")
         
-        # Calculate RMS energy
-        frame_length = 2048
-        hop_length = 512
+        # Get duration first to check if we should skip
+        duration = get_audio_duration(audio_path)
+        if duration > 3600:  # Skip for files > 1 hour
+            print(f"Audio too long ({duration/60:.1f} minutes), skipping silence detection")
+            return []
+        
+        # Load audio with reduced sample rate for faster processing
+        target_sr = 16000  # Lower sample rate for faster processing
+        print(f"Loading audio at {target_sr}Hz for analysis...")
+        y, sr = librosa.load(audio_path, sr=target_sr, mono=True)
+        
+        # Use larger frame and hop lengths for faster processing
+        frame_length = 4096  # Increased from 2048
+        hop_length = 1024    # Increased from 512
+        
+        print("Calculating audio energy levels...")
         rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
         
         # Convert to dB
@@ -68,6 +80,7 @@ def detect_silence_intervals(audio_path, min_silence_duration=2.0, silence_thres
         times = librosa.frames_to_time(np.arange(len(rms_db)), sr=sr, hop_length=hop_length)
         
         # Find continuous silence intervals
+        print("Detecting silence intervals...")
         silence_intervals = []
         in_silence = False
         silence_start = 0
@@ -89,6 +102,12 @@ def detect_silence_intervals(audio_path, min_silence_duration=2.0, silence_thres
             silence_duration = times[-1] - silence_start
             if silence_duration >= min_silence_duration:
                 silence_intervals.append((silence_start, times[-1]))
+        
+        print(f"Found {len(silence_intervals)} silence intervals")
+        
+        # Clear memory
+        del y, rms, rms_db
+        gc.collect()
         
         return silence_intervals
         
@@ -159,72 +178,156 @@ def split_audio_dynamic(audio_path, min_duration=30.0, max_duration=900.0, use_d
     """Split audio file using dynamic or fixed chunking"""
     temp_dir = tempfile.mkdtemp()
     chunk_files = []
+    chunk_boundaries = []
     
     try:
         duration = get_audio_duration(audio_path)
-        print(f"Audio duration: {duration:.1f} seconds")
+        print(f"Audio duration: {duration:.1f} seconds ({duration/60:.1f} minutes)")
         
         if duration <= max_duration:
             # No need to split
-            return [audio_path], temp_dir
+            return [audio_path], temp_dir, [0.0]
         
         if use_dynamic:
             # Try dynamic splitting first
             print("Analyzing audio for optimal split points...")
-            boundaries = detect_speech_boundaries(audio_path, min_duration, max_duration)
             
-            if boundaries and len(boundaries) > 2:  # More than just start and end
-                print(f"Using dynamic splitting with {len(boundaries)-1} chunks")
+            # Skip dynamic chunking for very long files (>20 minutes) to save time
+            if duration > 1200:  # 20 minutes
+                print(f"Audio too long ({duration/60:.1f} minutes), using fixed chunking for speed")
+                use_dynamic = False
+            else:
+                boundaries = detect_speech_boundaries(audio_path, min_duration, max_duration)
                 
-                for i in range(len(boundaries) - 1):
-                    start_time = boundaries[i]
-                    end_time = boundaries[i + 1]
-                    chunk_duration = end_time - start_time
+                if boundaries and len(boundaries) > 2:  # More than just start and end
+                    print(f"Using dynamic splitting with {len(boundaries)-1} chunks")
                     
-                    chunk_file = os.path.join(temp_dir, f"chunk_{i:03d}.m4a")
+                    # Create chunks in parallel for faster processing
+                    from concurrent.futures import ThreadPoolExecutor
+                    import threading
                     
-                    # Use ffmpeg to split audio
-                    subprocess.run([
-                        'ffmpeg', '-i', audio_path, '-ss', str(start_time),
-                        '-t', str(chunk_duration), '-c', 'copy', '-y', chunk_file
-                    ], capture_output=True, check=True)
+                    def create_chunk(chunk_info):
+                        i, start_time, end_time = chunk_info
+                        chunk_duration = end_time - start_time
+                        chunk_file = os.path.join(temp_dir, f"chunk_{i:03d}.m4a")
+                        
+                        print(f"Creating chunk {i+1}/{len(boundaries)-1} (duration: {chunk_duration:.1f}s)...")
+                        
+                        # Use ffmpeg with fast seek
+                        result = subprocess.run([
+                            'ffmpeg', '-ss', str(start_time), '-i', audio_path,
+                            '-t', str(chunk_duration), '-c', 'copy', '-avoid_negative_ts', 'make_zero',
+                            '-y', chunk_file
+                        ], capture_output=True)
+                        
+                        if result.returncode == 0 and os.path.exists(chunk_file) and os.path.getsize(chunk_file) > 0:
+                            print(f"  Chunk {i+1} created successfully")
+                            return i, chunk_file, start_time
+                        else:
+                            print(f"  Error creating chunk {i+1}: {result.stderr.decode()}")
+                            return None
                     
-                    if os.path.exists(chunk_file) and os.path.getsize(chunk_file) > 0:
-                        chunk_files.append(chunk_file)
-                
-                if chunk_files:
-                    print(f"Created {len(chunk_files)} dynamic chunks")
-                    return chunk_files, temp_dir
+                    # Prepare chunk info
+                    chunk_infos = [(i, boundaries[i], boundaries[i+1]) for i in range(len(boundaries) - 1)]
+                    
+                    # Process chunks in parallel (use more workers for faster processing)
+                    max_workers = min(8, len(chunk_infos), multiprocessing.cpu_count())
+                    print(f"Using {max_workers} parallel workers for chunk creation...")
+                    
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        # Submit all tasks
+                        futures = [executor.submit(create_chunk, info) for info in chunk_infos]
+                        
+                        # Process with progress bar
+                        results = []
+                        for future in tqdm(as_completed(futures), total=len(futures), desc="Creating chunks"):
+                            result = future.result()
+                            if result:
+                                results.append(result)
+                    
+                    # Collect successful chunks from async results
+                    chunk_data = []
+                    for result in results:
+                        if result:
+                            i, chunk_file, start_time = result
+                            chunk_data.append((i, chunk_file, start_time))
+                    
+                    # Sort by index to maintain order
+                    chunk_data.sort(key=lambda x: x[0])
+                    
+                    # Extract file paths and boundaries
+                    chunk_files = [cd[1] for cd in chunk_data]
+                    chunk_boundaries = [cd[2] for cd in chunk_data]
+                    
+                    if chunk_files:
+                        print(f"Created {len(chunk_files)} dynamic chunks")
+                        return chunk_files, temp_dir, chunk_boundaries
         
         # Fallback to fixed chunking
         print(f"Using fixed chunking with {max_duration//60}-minute chunks...")
-        return split_audio_fixed(audio_path, max_duration, temp_dir)
+        chunk_files, temp_dir = split_audio_fixed(audio_path, max_duration, temp_dir)
+        
+        # Generate boundaries for fixed chunking
+        for i in range(len(chunk_files)):
+            chunk_boundaries.append(i * max_duration)
+        
+        return chunk_files, temp_dir, chunk_boundaries
         
     except Exception as e:
         print(f"Error in dynamic splitting: {e}")
         print("Falling back to fixed chunking...")
-        return split_audio_fixed(audio_path, max_duration, temp_dir)
+        chunk_files, temp_dir = split_audio_fixed(audio_path, max_duration, temp_dir)
+        
+        # Generate boundaries for fixed chunking fallback
+        for i in range(len(chunk_files)):
+            chunk_boundaries.append(i * max_duration)
+        
+        return chunk_files, temp_dir, chunk_boundaries
 
 def split_audio_fixed(audio_path, chunk_duration, temp_dir):
-    """Fixed-time audio splitting (fallback method)"""
+    """Fixed-time audio splitting with parallel processing"""
     chunk_files = []
     
     try:
         duration = get_audio_duration(audio_path)
         num_chunks = int(duration // chunk_duration) + 1
         
-        for i in range(num_chunks):
-            start_time = i * chunk_duration
+        print(f"Creating {num_chunks} fixed chunks of {chunk_duration}s each...")
+        
+        # Function to create a single chunk
+        def create_fixed_chunk(chunk_info):
+            i, start_time = chunk_info
             chunk_file = os.path.join(temp_dir, f"chunk_{i:03d}.m4a")
             
-            # Use ffmpeg to split audio
-            subprocess.run([
-                'ffmpeg', '-i', audio_path, '-ss', str(start_time),
-                '-t', str(chunk_duration), '-c', 'copy', '-y', chunk_file
-            ], capture_output=True, check=True)
+            # Calculate actual chunk duration (last chunk might be shorter)
+            actual_duration = min(chunk_duration, duration - start_time)
             
-            if os.path.exists(chunk_file) and os.path.getsize(chunk_file) > 0:
-                chunk_files.append(chunk_file)
+            print(f"Creating chunk {i+1}/{num_chunks} (start: {start_time:.1f}s, duration: {actual_duration:.1f}s)...")
+            
+            # Use ffmpeg with fast seek (-ss before -i)
+            result = subprocess.run([
+                'ffmpeg', '-ss', str(start_time), '-i', audio_path,
+                '-t', str(actual_duration), '-c', 'copy', '-avoid_negative_ts', 'make_zero',
+                '-y', chunk_file
+            ], capture_output=True)
+            
+            if result.returncode == 0 and os.path.exists(chunk_file) and os.path.getsize(chunk_file) > 0:
+                print(f"  Chunk {i+1} created successfully")
+                return chunk_file
+            else:
+                print(f"  Error creating chunk {i+1}: {result.stderr.decode() if result.stderr else 'Unknown error'}")
+                return None
+        
+        # Prepare chunk info
+        chunk_infos = [(i, i * chunk_duration) for i in range(num_chunks)]
+        
+        # Process chunks in parallel (limit to 4 workers)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, num_chunks)) as executor:
+            results = list(executor.map(create_fixed_chunk, chunk_infos))
+        
+        # Collect successful chunks
+        chunk_files = [f for f in results if f is not None]
         
         print(f"Created {len(chunk_files)} fixed chunks")
         return chunk_files, temp_dir
@@ -499,9 +602,11 @@ def transcribe_with_chunking(video_path, model_size="base", temperature=0.0, chu
     
     # Split audio into chunks
     if use_dynamic_chunking:
-        chunk_files, temp_dir = split_audio_dynamic(video_path, min_duration=30.0, max_duration=chunk_duration, use_dynamic=True)
+        chunk_files, temp_dir, chunk_boundaries = split_audio_dynamic(video_path, min_duration=30.0, max_duration=chunk_duration, use_dynamic=True)
     else:
         chunk_files, temp_dir = split_audio_fixed(video_path, chunk_duration, tempfile.mkdtemp())
+        # Generate boundaries for fixed chunking
+        chunk_boundaries = [i * chunk_duration for i in range(len(chunk_files))]
     
     if len(chunk_files) == 1:
         # No chunking needed, use standard method
@@ -604,15 +709,8 @@ def transcribe_with_chunking(video_path, model_size="base", temperature=0.0, chu
         
         # Combine results from all chunks
         print("Combining results from all chunks...")
-        # Get chunk boundaries if using dynamic chunking
-        chunk_boundaries = None
-        if use_dynamic_chunking:
-            try:
-                chunk_boundaries = detect_speech_boundaries(video_path, min_duration=30.0, max_duration=chunk_duration)
-            except:
-                pass
         
-        combined_result = combine_chunk_results(chunk_results, chunk_boundaries)
+        combined_result = combine_chunk_results(chunk_results, chunk_boundaries, chunk_duration)
         
         return combined_result
         
@@ -623,7 +721,7 @@ def transcribe_with_chunking(video_path, model_size="base", temperature=0.0, chu
         except:
             pass
 
-def combine_chunk_results(chunk_results, chunk_boundaries=None):
+def combine_chunk_results(chunk_results, chunk_boundaries=None, chunk_duration=600):
     """Combine transcription results from multiple chunks"""
     combined_segments = []
     full_text = ""
@@ -633,12 +731,12 @@ def combine_chunk_results(chunk_results, chunk_boundaries=None):
     
     for chunk_index, result in sorted_chunks:
         # Calculate time offset
-        if chunk_boundaries and chunk_index < len(chunk_boundaries):
+        if chunk_boundaries and len(chunk_boundaries) > chunk_index:
             # Use actual boundaries from dynamic chunking
             time_offset = chunk_boundaries[chunk_index]
         else:
             # Fallback to estimated offset (for fixed chunking)
-            time_offset = chunk_index * 600  # Default chunk duration
+            time_offset = chunk_index * chunk_duration
         
         # Add text
         if result["text"].strip():

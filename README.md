@@ -112,7 +112,7 @@ sudo apt update
 sudo apt install -y python3-pip python3-dev python3-venv
 
 # Install FFmpeg and audio libraries
-sudo apt install -y ffmpeg libffi-dev libssl-dev
+sudo apt install -y ffmpeg libffi-dev libssl-dev libsndfile1
 
 # Install additional dependencies for Python compilation (if using pyenv)
 sudo apt install -y build-essential zlib1g-dev libbz2-dev \
@@ -125,8 +125,8 @@ sudo apt install -y build-essential zlib1g-dev libbz2-dev \
 # Install Homebrew (if not already installed)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Install Python and FFmpeg
-brew install python ffmpeg
+# Install Python, FFmpeg and audio libraries
+brew install python ffmpeg libsndfile
 ```
 
 #### For Windows (WSL2 Recommended)
