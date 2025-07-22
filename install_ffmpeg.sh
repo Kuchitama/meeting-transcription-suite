@@ -50,7 +50,7 @@ check_ffmpeg() {
 
 # Function to install via apt (Ubuntu/Debian)
 install_apt() {
-    print_status "Installing FFmpeg via apt (Ubuntu/Debian)..."
+    print_status "Installing FFmpeg and audio libraries via apt (Ubuntu/Debian)..."
     
     if ! command_exists apt; then
         print_error "apt package manager not found. This method requires Ubuntu/Debian."
@@ -61,25 +61,25 @@ install_apt() {
     print_status "Updating package list..."
     sudo apt update
     
-    # Install FFmpeg
-    print_status "Installing ffmpeg package..."
-    sudo apt install -y ffmpeg
+    # Install FFmpeg and audio libraries
+    print_status "Installing ffmpeg and libsndfile1 packages..."
+    sudo apt install -y ffmpeg libsndfile1
     
     return 0
 }
 
-# Function to install via Homebrew (Linux)
+# Function to install via Homebrew (Linux/macOS)
 install_homebrew() {
-    print_status "Installing FFmpeg via Homebrew..."
+    print_status "Installing FFmpeg and audio libraries via Homebrew..."
     
     if ! command_exists brew; then
         print_error "Homebrew not found. Please install Homebrew first or try another method."
         return 1
     fi
     
-    # Install FFmpeg
-    print_status "Installing ffmpeg via brew..."
-    brew install ffmpeg
+    # Install FFmpeg and audio libraries
+    print_status "Installing ffmpeg and libsndfile via brew..."
+    brew install ffmpeg libsndfile
     
     return 0
 }

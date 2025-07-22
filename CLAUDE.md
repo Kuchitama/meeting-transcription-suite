@@ -10,6 +10,10 @@ Meeting Transcription Suite is a Python-based audio transcription tool built on 
 
 ### Installation
 ```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt install -y ffmpeg libsndfile1
+
+# Install Python dependencies
 pip install -r requirements.txt
 ```
 
@@ -137,6 +141,7 @@ docs/                    # Japanese documentation
 - `--fast`: Enable speculative decoding
 - `--no-dynamic-chunking`: Disable intelligent chunking
 - `--no-batch-processing`: Disable batch optimization
+- `--no-speculative-decoding`: Disable speculative decoding when using --fast
 
 ## Model Performance Comparison
 
@@ -202,6 +207,16 @@ ffmpeg -i input.format -c:a aac output.m4a
 ffmpeg -i input.format -c:a pcm_s16le output.wav
 ```
 
+### Librosa PySoundFile Warning
+If you see "PySoundFile failed. Trying audioread instead" warning:
+```bash
+# Install libsndfile1 (Ubuntu/Debian)
+sudo apt install -y libsndfile1
+
+# Or use the installation script
+./install_ffmpeg.sh
+```
+
 ## Output Format
 - Creates `{input_filename}_transcription.txt`
 - Includes full transcription, timestamped segments, and processing metadata
@@ -212,12 +227,21 @@ ffmpeg -i input.format -c:a pcm_s16le output.wav
 ### External Dependencies
 - **FFmpeg**: Required for audio/video processing and format conversion
 - **CUDA**: Optional for GPU acceleration (automatically detected)
+- **libsndfile1**: Required for librosa audio loading functionality
 
 ### Performance Considerations
 - GPU memory is automatically managed with dynamic batch sizing
 - The `SpeculativeDecoder` class provides significant speedup for large models
 - Dynamic chunking improves accuracy by respecting speech boundaries
 - Parallel processing uses ThreadPoolExecutor for multi-threaded transcription
+
+#### Recent Performance Optimizations (2025-01-22)
+- **Parallel Chunk Creation**: Audio chunks are now created in parallel using up to 8 workers
+- **Optimized Silence Detection**: Uses 16kHz sample rate and larger frame sizes for faster processing
+- **Fast-Seek FFmpeg**: Commands use `-ss` before `-i` for significantly faster chunk creation
+- **Smart Thresholds**: Dynamic chunking disabled for files >20 minutes, silence detection skipped for files >1 hour
+- **Progress Indicators**: Added tqdm progress bars for chunk creation visibility
+- **Memory Cleanup**: Explicit garbage collection after audio processing to free memory
 
 ### Japanese Language Optimization
 - **Temperature**: 0.0 for deterministic, accurate results (most critical setting)
