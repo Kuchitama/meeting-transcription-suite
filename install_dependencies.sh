@@ -72,40 +72,17 @@ check_libsndfile() {
     fi
 }
 
-# Function to install libsndfile
-install_libsndfile() {
-    print_status "Installing libsndfile for audio processing support..."
-    
-    if command_exists apt; then
-        sudo apt install -y libsndfile1
-        print_success "libsndfile1 installed via apt"
-        return 0
-    elif command_exists yum; then
-        sudo yum install -y libsndfile
-        print_success "libsndfile installed via yum"
-        return 0
-    elif command_exists dnf; then
-        sudo dnf install -y libsndfile
-        print_success "libsndfile installed via dnf"
-        return 0
-    elif command_exists brew; then
-        brew install libsndfile
-        print_success "libsndfile installed via brew"
-        return 0
-    else
-        print_warning "Could not install libsndfile automatically. Please install manually:"
-        print_warning "  Ubuntu/Debian: sudo apt install libsndfile1"
-        print_warning "  CentOS/RHEL: sudo yum install libsndfile"
-        print_warning "  macOS: brew install libsndfile"
-        return 1
-    fi
-}
 
 # Function to install liblzma-dev
 install_lzma_dev() {
     print_status "Installing liblzma-dev for Python lzma module support..."
     
-    if command_exists apt; then
+    # Prioritize brew if available
+    if command_exists brew; then
+        brew install xz
+        print_success "xz installed via brew"
+        return 0
+    elif command_exists apt; then
         sudo apt install -y liblzma-dev
         print_success "liblzma-dev installed via apt"
         return 0
@@ -117,15 +94,11 @@ install_lzma_dev() {
         sudo dnf install -y xz-devel
         print_success "xz-devel installed via dnf"
         return 0
-    elif command_exists brew; then
-        brew install xz
-        print_success "xz installed via brew"
-        return 0
     else
         print_warning "Could not install liblzma-dev automatically. Please install manually:"
+        print_warning "  macOS: brew install xz"
         print_warning "  Ubuntu/Debian: sudo apt install liblzma-dev"
         print_warning "  CentOS/RHEL: sudo yum install xz-devel"
-        print_warning "  macOS: brew install xz"
         return 1
     fi
 }
@@ -184,8 +157,35 @@ install_snap() {
         print_warning "Could not install liblzma-dev via snap. You may need to install it manually."
     fi
     
-    if ! install_libsndfile; then
-        print_warning "Could not install libsndfile via snap. You may need to install it manually."
+    # Try to install libsndfile through system package manager
+    print_status "Attempting to install libsndfile through system package manager..."
+    LIBSNDFILE_INSTALLED=0
+    
+    # Prioritize brew if available
+    if command_exists brew; then
+        if brew install libsndfile; then
+            print_success "libsndfile installed via brew"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    elif command_exists apt; then
+        if sudo apt install -y libsndfile1; then
+            print_success "libsndfile1 installed via apt"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    elif command_exists yum; then
+        if sudo yum install -y libsndfile; then
+            print_success "libsndfile installed via yum"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    elif command_exists dnf; then
+        if sudo dnf install -y libsndfile; then
+            print_success "libsndfile installed via dnf"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    fi
+    
+    if [ $LIBSNDFILE_INSTALLED -eq 0 ]; then
+        print_warning "Could not install libsndfile. You may need to install it manually."
     fi
     
     return 0
@@ -253,8 +253,34 @@ install_static() {
         print_warning "Could not install liblzma-dev. You may need to install it manually."
     fi
     
-    # Try to install libsndfile separately
-    if ! install_libsndfile; then
+    # Try to install libsndfile through system package manager
+    print_status "Attempting to install libsndfile through system package manager..."
+    LIBSNDFILE_INSTALLED=0
+    
+    # Prioritize brew if available
+    if command_exists brew; then
+        if brew install libsndfile; then
+            print_success "libsndfile installed via brew"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    elif command_exists apt; then
+        if sudo apt install -y libsndfile1; then
+            print_success "libsndfile1 installed via apt"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    elif command_exists yum; then
+        if sudo yum install -y libsndfile; then
+            print_success "libsndfile installed via yum"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    elif command_exists dnf; then
+        if sudo dnf install -y libsndfile; then
+            print_success "libsndfile installed via dnf"
+            LIBSNDFILE_INSTALLED=1
+        fi
+    fi
+    
+    if [ $LIBSNDFILE_INSTALLED -eq 0 ]; then
         print_warning "Could not install libsndfile. You may need to install it manually."
     fi
     
@@ -383,10 +409,11 @@ main() {
         fi
         
         if [ $LIBSNDFILE_OK -eq 0 ]; then
-            print_status "Attempting to install libsndfile..."
-            if install_libsndfile; then
-                print_success "libsndfile installed. You may need to reinstall soundfile: pip install --force-reinstall soundfile"
-            fi
+            print_warning "libsndfile not detected. Please install it using:"
+            print_warning "  macOS/Linux with Homebrew: brew install libsndfile"
+            print_warning "  Ubuntu/Debian: sudo apt install libsndfile1"
+            print_warning "  CentOS/RHEL: sudo yum install libsndfile"
+            print_warning "After installation, run: pip install --force-reinstall soundfile"
             NEED_INSTALL=1
         fi
         
@@ -442,16 +469,7 @@ main() {
         auto)
             print_status "Auto-detecting best installation method..."
             
-            # Try methods in order of preference
-            if command_exists apt; then
-                print_status "Detected apt package manager, trying apt installation..."
-                if install_apt && verify_installation; then
-                    print_success "Dependencies installation completed via apt!"
-                    exit 0
-                fi
-                print_warning "apt installation failed, trying next method..."
-            fi
-            
+            # Try methods in order of preference (brew first)
             if command_exists brew; then
                 print_status "Detected Homebrew, trying brew installation..."
                 if install_homebrew && verify_installation; then
@@ -459,6 +477,15 @@ main() {
                     exit 0
                 fi
                 print_warning "Homebrew installation failed, trying next method..."
+            fi
+            
+            if command_exists apt; then
+                print_status "Detected apt package manager, trying apt installation..."
+                if install_apt && verify_installation; then
+                    print_success "Dependencies installation completed via apt!"
+                    exit 0
+                fi
+                print_warning "apt installation failed, trying next method..."
             fi
             
             if command_exists snap; then
